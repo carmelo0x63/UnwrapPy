@@ -7,13 +7,14 @@
 # Adapted from: https://isc.sans.edu/diary/28980
 
 # Import some modules
-import argparse         # Parser for command-line options, arguments and sub-commands
-import ipinfo           # IPinfo Python Client Library
-import ipaddress        # IPv4/IPv6 manipulation library
-import json             # JSON encoder and decoder
-import requests         # HTTP library for Python
-import subprocess       # Subprocess management
-import sys              # System-specific parameters and functions
+import argparse                    # Parser for command-line options, arguments and sub-commands
+import ipinfo                      # IPinfo Python Client Library
+import ipaddress                   # IPv4/IPv6 manipulation library
+import json                        # JSON encoder and decoder
+import requests                    # HTTP library for Python
+import subprocess                  # Subprocess management
+import sys                         # System-specific parameters and functions
+from urllib.parse import urlparse  # Parse URLs into components
 
 # Version number
 __version__ = '1.0'
@@ -25,10 +26,33 @@ def findLocation(url):
     findLocation() sends a HEAD request to 'url', only headers are returned
     """
     o = requests.head(url)
+
     try:
-        return (o.headers['Location'], o.status_code)
+        location = o.headers['Location']
+        parsedURL = urlparse(location)
+        if parsedURL.scheme[:4] == 'http':
+            location = parsedURL.scheme + '://' + parsedURL.netloc
     except KeyError:
-        return ('', o.status_code)
+        print('[-] Location unavailable')
+        sys.exit(20)  # ERROR: target location unavailable
+
+    if ISVERBOSE == 1:
+        print('[+] Target URL: "' + location + '"')
+    elif ISVERBOSE > 1:
+        print('[+] Scheme     : "' + parsedURL.scheme + '"')
+        print('[+] Domain     : "' + parsedURL.netloc + '"')
+        print('[+] Path       : "' + parsedURL.path + '"')
+        print('[+] Params     : "' + parsedURL.params + '"')
+        print('[+] Query      : "' + parsedURL.query + '"')
+        print('[+] Fragment   : "' + parsedURL.fragment + '"')
+    else:
+        print(location)
+        sys.exit(0)
+
+    print('[+] Status code : "' + expandStatus(o.status_code) + '"', end = '\n\n')
+
+    # a 2-tuple is returned, for instance: ('https://www.example.com', 'www.example.com')
+    return (location, parsedURL.netloc)
 
 
 def expandStatus(code):
@@ -65,28 +89,10 @@ def getIPfromURL(url):
        except:
            pass
 
+    length = len(foundIPs)
+    if ISVERBOSE: print(f'[+] Found {length} IP address(es)', end = '\n\n')
+
     return foundIPs
-
-
-def getIPdetails(ip):
-    try:
-        with open('ipinfo_config.json', 'r') as config_in:
-            config_json = json.load(config_in)
-        if ISVERBOSE: print('[+] Config file found')
-        if config_json['TOKEN'] == '': 
-            print('[-] IPinfo access token empty!')
-            print('[-] Quitting!', end = '\n\n')
-            sys.exit(50)  # ERROR: empty access token
-        else:
-            if ISVERBOSE: print('[+] IPinfo access token found!')
-    except FileNotFoundError:
-        print('[-] Config file not found')
-        print('[-] Quitting!', end = '\n\n')
-        sys.exit(20)  # ERROR: config file not found
-
-    access_token = config_json['TOKEN']
-    handler = ipinfo.getHandler(access_token)
-    return handler.getDetails(ip)
 
 
 def readConf():
@@ -100,24 +106,34 @@ def readConf():
     try:
         with open('ipinfo_config.json', 'r') as config_in:
             config_json = json.load(config_in)
-        if ISVERBOSE: print('[+] Config file found')
+        if ISVERBOSE > 2: print('[+] Config file found')
         if config_json['TOKEN'] == '': 
             print('[-] IPinfo access token empty!')
             print('[-] Quitting!', end = '\n\n')
-            sys.exit(50)  # ERROR: empty access token
+            sys.exit(30)  # ERROR: empty access token
         else:
-            if ISVERBOSE: print('[+] IPinfo access token found!')
-        return config_json
+            if ISVERBOSE > 2: print('[+] IPinfo access token found!')
     except FileNotFoundError:
         print('[-] Config file not found')
         print('[-] Quitting!', end = '\n\n')
-        sys.exit(20)  # ERROR: config file not found
+        sys.exit(40)  # ERROR: config file not found
+
+    return config_json['TOKEN']
+
+
+def getIPdetails(ip, access_token):
+    """ 
+    getIPdetails() consumer the IPinfo API to harvest information about the 'ip' being passed on
+    an access token is needed which is fetched from a JSON confind file by readConf()
+    """
+    handler = ipinfo.getHandler(access_token)
+    return handler.getDetails(ip)
 
 
 def main():
     parser = argparse.ArgumentParser(description='"Unwraps" short URLs showing all the hidden details, version ' + __version__ + ', build ' + __build__ + '.')
     parser.add_argument('-u', '--url', metavar = '<URL>', type = str, help = 'URL to be analyzed')
-    parser.add_argument('-v', '--verbose', action = 'store_true', help = 'Print extended information')
+    parser.add_argument('-v', '--verbose', action = 'count', default = 0, help = 'Print extended information')
     parser.add_argument('-V', '--version', action = 'version', version = '%(prog)s ' + __version__)
 
     # In case of no arguments an help message is shown
@@ -131,27 +147,17 @@ def main():
     global ISVERBOSE
     ISVERBOSE = args.verbose
 
-    # Here the URL is "normalized", if a heading 'http' is not present we add it
+    # Here the URL is "normalized", if a heading such as 'http://' is not present we add it
+    # e.g.: example.com -> http://example.com
     url = args.url
     if url[:4] != 'http':
         url = 'http://' + url
 
-    # location is a 2-tuple containing the 'Location' + HTTP status code
-    location = findLocation(url)
-
-    if ISVERBOSE:
-        print('[!] Raw location: "' + expandStatus(location[0]) + '"')
-        print('[!] Status code: "' + expandStatus(location[1]) + '"')
-
-    if location[0] != '':
-        targetUrl = location[0].split('/')[2]
-    else:
-        print('[-] Location unavailable')
-        sys.exit(20)  # ERROR: target location unavailable
-
-    ipList = getIPfromURL(targetUrl)
+    t_location = findLocation(url)
+    ipList = getIPfromURL(t_location[1])
+    access_token = readConf()
     for ip in ipList:
-        details = getIPdetails(ip)
+        details = getIPdetails(ip, access_token)
         print('[+] IP: ' + ip)
         try:
             print('[+] hostname: ' + details.hostname)
