@@ -11,13 +11,13 @@ Inspired by [Taking Apart URL Shorteners](https://isc.sans.edu/diary/28980), I d
 
 ### Initialize
 ```
-$ python3 -m venv .
+$ python3 -m venv venv
 
-$ source bin/activate
+$ source venv/bin/activate
 
-$ (UnwrapPy) python3 -m pip install --upgrade pip setuptools wheel
+(venv) $ python3 -m pip install --upgrade pip setuptools wheel
 
-$ (UnwrapPy) python3 -m pip install requests ipinfo
+(venv) $ python3 -m pip install requests ipinfo
 ```
 
 ----
